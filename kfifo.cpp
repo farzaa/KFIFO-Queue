@@ -6,6 +6,17 @@
 using namespace std;
 
 
+struct Item {
+    int value;
+    int tag;
+
+    Item(int value) {
+        this->value = value;
+        this->tag = 0;
+    }
+};
+
+
 class KQueue {
     public:
     int size;
@@ -13,7 +24,9 @@ class KQueue {
 
     atomic<int> head;
     atomic<int> tail;
-    array<std::atomic<int>, 10> arr = {};
+    array<std::atomic<int>, 100> arr = {};
+
+    array<std::atomic<Item*>, 100> arr2 = {};
 
     KQueue(int size) {
         this->size = size;
@@ -70,20 +83,20 @@ class KQueue {
          return false;
      }
 
-     // TODO
+     // The in_valid_region and not_in_valid_region functions
+     // were written with the assistance of the scal library.
+     // https://github.com/cksystemsgroup/scal
      bool in_valid_region(int tail_old, int tail_current, int head_current) {
-         bool wrap_around = (tail_current < head_current)
-                            ? true : false;
+         bool wrap_around = (tail_current < head_current) ? true : false;
          if (!wrap_around) {
-           return (head_current < tail_old
-                   && tail_old <= tail_current) ? true : false;
-         }
-         return (head_current < tail_old
-                 || tail_old <= tail_current) ? true : false;
+           return (head_current < tail_old && tail_old <= tail_current) ? true : false;
+       }
+
+         return (head_current < tail_old || tail_old <= tail_current) ? true : false;
          return true;
      }
 
-     // TODO
+
      bool not_in_valid_region(int tail_old, int tail_current, int head_current) {
          bool wrap_around = (tail_current < head_current)
                             ? true : false;
@@ -96,7 +109,7 @@ class KQueue {
          return true;
      }
 
-     // TODO
+
      bool committed(int tail_old, int item_new, int index) {
          if(arr[tail_old].load() != item_new) {
              return true;
@@ -106,7 +119,7 @@ class KQueue {
          int tail_curr = tail.load();
 
          if (in_valid_region(tail_old, tail_curr, head_curr)) {
-           return true;
+             return true;
          } else if (not_in_valid_region(tail_old, tail_curr, head_curr)) {
              // TODO versioning!
            if (!arr[index].compare_exchange_strong(item_new, 0)) {
@@ -135,8 +148,10 @@ class KQueue {
     }
 
     bool enqueue(int item_to_add) {
+        atomic<int> new_item = ATOMIC_VAR_INIT(item_to_add);
         while(true) {
-            atomic<int> new_item = ATOMIC_VAR_INIT(item_to_add);
+
+            Item i (item_to_add);
 
             int tail_old = tail.load();
             int head_old = head.load();
@@ -149,6 +164,7 @@ class KQueue {
                     // TODO - implement version numbering. This would mean using atomic struct pointers.
                     // Not sure what the implications of this would be, need to think about it.
                     printf("Got call to enqueue. Found free space at %d with value %d\n", item_index, old);
+
                     if (arr[item_index].compare_exchange_strong(old, new_item)) {
                         if (committed(tail_old, new_item, item_index)) {
                             return true;
@@ -225,23 +241,20 @@ int main()
 {
     // Initialize an array of atomic integers to 0.
     int i;
-    int dequeued_value;
-    KQueue q (10);
 
-    q.enqueue(5);
-    printf("Head is at %d and tail is at %d\n", q.head.load(), q.tail.load());
-    q.enqueue(6);
-    printf("Head is at %d and tail is at %d\n", q.head.load(), q.tail.load());
-    q.enqueue(7);
-    printf("Head is at %d and tail is at %d\n", q.head.load(), q.tail.load());
-    q.enqueue(8);
-    printf("Head is at %d and tail is at %d\n", q.head.load(), q.tail.load());
-    q.enqueue(9);
-    printf("Head is at %d and tail is at %d\n", q.head.load(), q.tail.load());
-    q.enqueue(10);
-    printf("Head is at %d and tail is at %d\n", q.head.load(), q.tail.load());
-    q.enqueue(11);
-    printf("Head is at %d and tail is at %d\n", q.head.load(), q.tail.load());
+
+    int dequeued_value;
+    KQueue q (20);
+
+    for(i = 0; i < 20; i++) {
+        bool s = q.enqueue(i);
+        if(s) {
+            printf("Successfully inserted %d. Head is at %d and tail is at %d\n", i, q.head.load(), q.tail.load());
+        } else {
+            printf("Didn't insert %d. Head is at %d and tail is at %d\n", i, q.head.load(), q.tail.load());
+        }
+
+    }
     q.printQueue();
 
 
