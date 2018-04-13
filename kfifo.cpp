@@ -2,9 +2,10 @@
 #include <array>
 #include <cstdlib>
 #include <atomic>
+#include <thread>
+#include <chrono>
 
 using namespace std;
-
 
 struct Item {
     int value;
@@ -22,11 +23,11 @@ class KQueue {
     int size;
     int k = 2;
 
+
     atomic<int> head;
     atomic<int> tail;
     array<std::atomic<int>, 100> arr = {};
-
-    array<std::atomic<Item*>, 100> arr2 = {};
+    array<std::atomic<Item*>, 100> a = {};
 
     KQueue(int size) {
         this->size = size;
@@ -59,7 +60,7 @@ class KQueue {
             *old = arr[index].load();
             // We assume that the index is empty if the value is 0.
             // empty just specfies if we are looking for an empty spot, or a taken spot.
-            if ((empty && *old == 0) || (!empty && *old != 0)) {
+            if (((empty && *old == 0)) || (!empty && *old != 0)) {
                 // both of these are pointers so that when they are changed
                 // the changes can be seen in the orignal function.
                 *item_index = index;
@@ -158,22 +159,21 @@ class KQueue {
 
             int item_index, old;
             bool found_free_space = findIndex(tail_old, true, &item_index, &old);
-
             if (tail_old == tail.load()) {
                 if (found_free_space) {
                     // TODO - implement version numbering. This would mean using atomic struct pointers.
                     // Not sure what the implications of this would be, need to think about it.
-                    printf("Got call to enqueue. Found free space at %d with value %d\n", item_index, old);
+                    // printf("Got call to enqueue. Found free space at %d with value %d\n", item_index, old);
 
                     if (arr[item_index].compare_exchange_strong(old, new_item)) {
                         if (committed(tail_old, new_item, item_index)) {
                             return true;
                         }
+                        return true;
                     }
 
                 } else {
                     if (is_queue_full(head_old, tail_old)) {
-                        printf("FULL\n");
                         // If our head segment has stuff, it means we are full.
                         if (segment_has_stuff(head_old) && head_old == head.load()) {
                             return false;
@@ -182,6 +182,7 @@ class KQueue {
                         // If the head didn't have stuff, we just increment head.
                         move_head_forward(head_old);
                     }
+
                     // check if queue is full AND the segemnt
                     move_tail_forward(tail_old);
                 }
@@ -224,13 +225,29 @@ class KQueue {
 
     void printQueue() {
         int i;
-        for(i = head.load(); i <= tail.load(); i++) {
+        for(i = head.load(); i <= tail.load() + 1; i++) {
             if (i % k == 0) {
                 printf(" - ");
             }
             printf("%d, ", arr[i].load());
         }
         printf("\n");
+    }
+
+    void do_work(int thread_number, int items_to_add[], int length) {
+        int i, dequeued_value;
+
+        for(i = 0; i < length; i++) {
+            int randy = rand() % 2;
+            if(randy == 0) {
+                // printf("#%d    ---------------------enq(%d)-----------------------\n", thread_number, items_to_add[i]);
+                bool s = enqueue(items_to_add[i]);
+            } else {
+                // printf("#%d    ---------------------deq()-----------------------\n", thread_number);
+                bool s = dequeue(&dequeued_value);
+            }
+
+        }
     }
 };
 
@@ -240,45 +257,55 @@ class KQueue {
 int main()
 {
     // Initialize an array of atomic integers to 0.
-    int i;
+    int i, j;
 
-
+    KQueue *qPointer = new KQueue(10000);
     int dequeued_value;
-    KQueue q (20);
 
-    for(i = 0; i < 20; i++) {
-        bool s = q.enqueue(i);
-        if(s) {
-            printf("Successfully inserted %d. Head is at %d and tail is at %d\n", i, q.head.load(), q.tail.load());
-        } else {
-            printf("Didn't insert %d. Head is at %d and tail is at %d\n", i, q.head.load(), q.tail.load());
+
+
+    int start_index = 1;
+
+
+    int num_threads = 3;
+    int total_jobs = 8000;
+
+
+    int jobs_per_thread = total_jobs/num_threads;
+
+    std::thread t[num_threads];
+
+    int** all_jobs = new int*[num_threads];
+
+    for(i = 0; i < num_threads; i++) {
+        all_jobs[i] = new int[jobs_per_thread];
+        for(j = 0; j < jobs_per_thread; j++) {
+            all_jobs[i][j] = start_index + j;
         }
-
+        start_index += jobs_per_thread;
     }
-    q.printQueue();
 
+    // for(int i = 0; i < num_threads; i++) {
+    //     for(int j = 0; j < jobs_per_thread; j++) {
+    //         printf(" %d ", all_jobs[i][j]);
+    //     }
+    // }
 
-    printf("--------------------------------------\n");
+    clock_t start = clock();
 
-    q.dequeue(&dequeued_value);
-    q.printQueue();
-    printf("deq - Head is at %d and tail is at %d\n", q.head.load(), q.tail.load());
+    for(i = 0; i < num_threads; i++) {
+        t[i] = std::thread(&KQueue::do_work, qPointer, i, all_jobs[i], jobs_per_thread);
+    }
 
-    q.dequeue(&dequeued_value);
-    q.printQueue();
-    printf("deq - Head is at %d and tail is at %d\n", q.head.load(), q.tail.load());
+    for(int i = 0; i < num_threads; ++i) {
+        t[i].join();
+    }
 
-    q.dequeue(&dequeued_value);
-    q.printQueue();
-    printf("deq - Head is at %d and tail is at %d\n", q.head.load(), q.tail.load());
+    clock_t stop = clock();
+    double elapsed = (double)(stop - start) * 1000.0 / CLOCKS_PER_SEC;
+    printf("Time elapsed in ms: %f\n", elapsed);
 
-    q.dequeue(&dequeued_value);
-    q.printQueue();
-    printf("deq - Head is at %d and tail is at %d\n", q.head.load(), q.tail.load());
-
-    // q.enqueue(8);
-    // q.enqueue(9);
-    // q.enqueue(10);
+    qPointer->printQueue();
 
     return 0;
 }
