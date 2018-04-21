@@ -23,7 +23,6 @@ class KQueue {
     int size;
     int k;
 
-
     atomic<int> head;
     atomic<int> tail;
 
@@ -34,14 +33,15 @@ class KQueue {
     // This is how they do it in the paper, after all.
     array<std::atomic<int>, 100000> arr = {};
 
-
-
-
-
+    std::atomic<int> jobs_completed;
+    std::atomic<int> failed;
 
     KQueue(int size, int k) {
         this->size = size;
         this->k = k;
+
+        this->jobs_completed = 0;
+        this->failed = 0;
 
         head.store(0);
         tail.store(0);
@@ -157,12 +157,16 @@ class KQueue {
     }
 
     bool enqueue(atomic<int> &new_item) {
+        return true;
+
         while(true) {
             int tail_old = tail.load();
             int head_old = head.load();
 
             int item_index, old;
             bool found_free_space = findIndex(tail_old, true, &item_index, &old);
+
+
             if (tail_old == tail.load()) {
                 if (found_free_space) {
                     // TODO - implement version numbering. This would mean using atomic struct pointers.
@@ -194,12 +198,14 @@ class KQueue {
 
     bool dequeue(int *item) {
         while (true) {
+
             int head_old = head.load();
 
             int item_index, old;
             bool found_index = findIndex(head_old, false, &item_index, &old);
 
             int tail_old = tail.load();
+
             if (head_old == head.load()) {
                 // we found something!
                 if (found_index) {
@@ -220,7 +226,6 @@ class KQueue {
                     move_head_forward(head_old);
                 }
             }
-
         }
     }
 
@@ -235,21 +240,29 @@ class KQueue {
         printf("\n");
     }
 
-    void do_work(int thread_number, atomic<int> items_to_add[], int length, bool deq) {
+
+    void do_work(int thread_number, int length, bool deq, bool enq) {
         int i, dequeued_value;
+        int count = 0;
 
-        for(i = 0; i < length; i++) {
-            int randy = rand() % 2;
-            if(randy == 0) {
-                // printf("#%d    ---------------------enq(%d)----------------------- %d %d\n", thread_number, items_to_add[i].load(), head.load(), tail.load());
-                bool s = enqueue(items_to_add[i]);
-            }
-
-            if(randy == 1 && deq) {
-                // printf("#%d    ---------------------deq()----------------------- %d %d\n", thread_number, head.load(), tail.load());
-                bool s = dequeue(&dequeued_value);
-            }
+        for(int i = 0; i < length; i++) {
+            count += i;
         }
+
+        // for(i = 0; i < length; i++) {
+        //     int randy = rand() % 2;
+        //     if(randy == 0 && enq) {
+        //         // printf("#%d    ---------------------enq(%d)----------------------- %d %d\n", thread_number, items_to_add[i].load(), head.load(), tail.load());
+        //         bool s = enqueue(items_to_add[i]);
+        //         this->jobs_completed++;
+        //     }
+        //
+        //     if(randy == 1 && deq) {
+        //         // printf("#%d    ---------------------deq()----------------------- %d %d\n", thread_number, head.load(), tail.load());
+        //         bool s = dequeue(&dequeued_value);
+        //         this->jobs_completed++;
+        //     }
+        // }
     }
 };
 
@@ -260,22 +273,21 @@ int main()
     // Initialize an array of atomic integers to 0.
     int i, j;
 
-    KQueue *qPointer = new KQueue(100000, 2);
+    KQueue *qPointer = new KQueue(100000, 32);
     int dequeued_value;
-
     int start_index = 0;
 
     // This is the only paramater that should be modified!
-    int num_threads = 2;
+    int num_threads = 1;
 
-    int total_jobs = 50;
+    int total_jobs = 10000000;
     int jobs_per_thread = total_jobs/num_threads;
     int elems = 0;
+
     std::thread t[num_threads];
-
+    // Create nodes before hand. This queue requires that
+    // only unique items are added!
     atomic<int>** pre = new atomic<int>*[num_threads];
-
-
     for(i = 0; i < num_threads; i++) {
         pre[i] = new atomic<int>[jobs_per_thread];
         for(j = 0; j < jobs_per_thread; j++) {
@@ -285,11 +297,13 @@ int main()
         start_index += jobs_per_thread;
     }
 
-    clock_t start = clock();
+
 
     for(i = 0; i < num_threads; i++) {
-        t[i] = std::thread(&KQueue::do_work, qPointer, i, pre[i], jobs_per_thread, true);
+        t[i] = std::thread(&KQueue::do_work, qPointer, i, jobs_per_thread, false, true);
     }
+
+    clock_t start = clock();
 
     for(int i = 0; i < num_threads; i++) {
         t[i].join();
@@ -297,18 +311,7 @@ int main()
 
     clock_t stop = clock();
     double elapsed = (double)(stop - start) * 1000.0 / CLOCKS_PER_SEC;
-
     printf("\nTime elapsed in ms: %f\n", elapsed);
-
-
-
-
-
-
-
-
-
-    printf("Jobs completed - %d\n\n", elems);
 
     // qPointer->printQueue();
 
