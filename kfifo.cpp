@@ -6,7 +6,7 @@
 #include <chrono>
 
 using namespace std;
-
+using namespace std::chrono;
 struct Item {
     int value;
     int tag;
@@ -97,6 +97,12 @@ class KQueue {
      // were written with the assistance of the scal library.
      // https://github.com/cksystemsgroup/scal
      bool in_valid_region(int tail_old, int tail_current, int head_current) {
+         if (tail_current < head_current) {
+             return true;
+         } else {
+             return false;
+         }
+
          bool wrap_around = (tail_current < head_current) ? true : false;
          if (!wrap_around) {
            return (head_current < tail_old && tail_old <= tail_current) ? true : false;
@@ -241,28 +247,29 @@ class KQueue {
     }
 
 
-    void do_work(int thread_number, int length, bool deq, bool enq) {
+    void do_work(int thread_number, atomic<int> items_to_add[], int length, bool deq, bool enq) {
         int i, dequeued_value;
         int count = 0;
 
         for(int i = 0; i < length; i++) {
-            count += i;
+            count += items_to_add[i];
         }
 
-        // for(i = 0; i < length; i++) {
-        //     int randy = rand() % 2;
-        //     if(randy == 0 && enq) {
-        //         // printf("#%d    ---------------------enq(%d)----------------------- %d %d\n", thread_number, items_to_add[i].load(), head.load(), tail.load());
-        //         bool s = enqueue(items_to_add[i]);
-        //         this->jobs_completed++;
-        //     }
-        //
-        //     if(randy == 1 && deq) {
-        //         // printf("#%d    ---------------------deq()----------------------- %d %d\n", thread_number, head.load(), tail.load());
-        //         bool s = dequeue(&dequeued_value);
-        //         this->jobs_completed++;
-        //     }
-        // }
+
+        for(i = 0; i < length; i++) {
+            int randy = rand() % 2;
+            if(randy == 0 && enq) {
+                // printf("#%d    ---------------------enq(%d)----------------------- %d %d\n", thread_number, items_to_add[i].load(), head.load(), tail.load());
+                bool s = enqueue(items_to_add[i]);
+                this->jobs_completed++;
+            }
+
+            if(randy == 1 && deq) {
+                // printf("#%d    ---------------------deq()----------------------- %d %d\n", thread_number, head.load(), tail.load());
+                bool s = dequeue(&dequeued_value);
+                this->jobs_completed++;
+            }
+        }
     }
 };
 
@@ -298,20 +305,19 @@ int main()
     }
 
 
-
     for(i = 0; i < num_threads; i++) {
-        t[i] = std::thread(&KQueue::do_work, qPointer, i, jobs_per_thread, false, true);
+        t[i] = std::thread(&KQueue::do_work, qPointer, i, pre[i], jobs_per_thread, true, true);
     }
 
-    clock_t start = clock();
-
+    high_resolution_clock::time_point t1 = high_resolution_clock::now();
     for(int i = 0; i < num_threads; i++) {
         t[i].join();
     }
 
-    clock_t stop = clock();
-    double elapsed = (double)(stop - start) * 1000.0 / CLOCKS_PER_SEC;
-    printf("\nTime elapsed in ms: %f\n", elapsed);
+    high_resolution_clock::time_point t2 = high_resolution_clock::now();
+    auto duration = duration_cast<milliseconds>( t2 - t1 ).count();
+
+    printf("\nTime elapsed in ms: %lld\n", duration);
 
     // qPointer->printQueue();
 
