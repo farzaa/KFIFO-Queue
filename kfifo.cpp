@@ -21,16 +21,28 @@ struct Item {
 class KQueue {
     public:
     int size;
-    int k = 2;
+    int k;
 
 
     atomic<int> head;
     atomic<int> tail;
-    array<std::atomic<int>, 100> arr = {};
-    array<std::atomic<Item*>, 100> a = {};
 
-    KQueue(int size) {
+    // TODO Idea:
+    // Instead of passing around the big ass array,
+    // Can we just pass around the individual segemnts?
+    // Not sure if that would help.
+    // This is how they do it in the paper, after all.
+    array<std::atomic<int>, 100000> arr = {};
+
+
+
+
+
+
+    KQueue(int size, int k) {
         this->size = size;
+        this->k = k;
+
         head.store(0);
         tail.store(0);
     }
@@ -46,7 +58,6 @@ class KQueue {
         if (((tail_old + k) % size) == head_old && (head_old == head.load())) {
                 return true;
         }
-
         return false;
      }
 
@@ -72,15 +83,13 @@ class KQueue {
 
 
      bool segment_has_stuff(int head_old) {
-         int i = 0;
-         int start = head_old;
+         int i, start = head_old;
 
          for(i = 0; i < k; i++) {
              if(arr[(start + i) % size].load() != 0) {
                  return true;
              }
          }
-
          return false;
      }
 
@@ -122,7 +131,6 @@ class KQueue {
          if (in_valid_region(tail_old, tail_curr, head_curr)) {
              return true;
          } else if (not_in_valid_region(tail_old, tail_curr, head_curr)) {
-             // TODO versioning!
            if (!arr[index].compare_exchange_strong(item_new, 0)) {
              return true;
            }
@@ -148,12 +156,8 @@ class KQueue {
         head.compare_exchange_strong(head_old, (head_old + k) % size);
     }
 
-    bool enqueue(int item_to_add) {
-        atomic<int> new_item = ATOMIC_VAR_INIT(item_to_add);
+    bool enqueue(atomic<int> &new_item) {
         while(true) {
-
-            Item i (item_to_add);
-
             int tail_old = tail.load();
             int head_old = head.load();
 
@@ -169,7 +173,6 @@ class KQueue {
                         if (committed(tail_old, new_item, item_index)) {
                             return true;
                         }
-                        return true;
                     }
 
                 } else {
@@ -177,10 +180,9 @@ class KQueue {
                         // If our head segment has stuff, it means we are full.
                         if (segment_has_stuff(head_old) && head_old == head.load()) {
                             return false;
+                        } else {
+                            move_head_forward(head_old);
                         }
-                        // TODO: this is in the paper but not sure why! (???)
-                        // If the head didn't have stuff, we just increment head.
-                        move_head_forward(head_old);
                     }
 
                     // check if queue is full AND the segemnt
@@ -222,10 +224,9 @@ class KQueue {
         }
     }
 
-
     void printQueue() {
         int i;
-        for(i = head.load(); i <= tail.load() + 1; i++) {
+        for(i = head.load(); i <= tail.load() + k - 1; i++) {
             if (i % k == 0) {
                 printf(" - ");
             }
@@ -234,23 +235,23 @@ class KQueue {
         printf("\n");
     }
 
-    void do_work(int thread_number, int items_to_add[], int length) {
+    void do_work(int thread_number, atomic<int> items_to_add[], int length, bool deq) {
         int i, dequeued_value;
 
         for(i = 0; i < length; i++) {
             int randy = rand() % 2;
             if(randy == 0) {
-                // printf("#%d    ---------------------enq(%d)-----------------------\n", thread_number, items_to_add[i]);
+                // printf("#%d    ---------------------enq(%d)----------------------- %d %d\n", thread_number, items_to_add[i].load(), head.load(), tail.load());
                 bool s = enqueue(items_to_add[i]);
-            } else {
-                // printf("#%d    ---------------------deq()-----------------------\n", thread_number);
-                bool s = dequeue(&dequeued_value);
             }
 
+            if(randy == 1 && deq) {
+                // printf("#%d    ---------------------deq()----------------------- %d %d\n", thread_number, head.load(), tail.load());
+                bool s = dequeue(&dequeued_value);
+            }
         }
     }
 };
-
 
 
 
@@ -259,53 +260,57 @@ int main()
     // Initialize an array of atomic integers to 0.
     int i, j;
 
-    KQueue *qPointer = new KQueue(10000);
+    KQueue *qPointer = new KQueue(100000, 2);
     int dequeued_value;
 
+    int start_index = 0;
 
+    // This is the only paramater that should be modified!
+    int num_threads = 2;
 
-    int start_index = 1;
-
-
-    int num_threads = 3;
-    int total_jobs = 8000;
-
-
+    int total_jobs = 50;
     int jobs_per_thread = total_jobs/num_threads;
-
+    int elems = 0;
     std::thread t[num_threads];
 
-    int** all_jobs = new int*[num_threads];
+    atomic<int>** pre = new atomic<int>*[num_threads];
+
 
     for(i = 0; i < num_threads; i++) {
-        all_jobs[i] = new int[jobs_per_thread];
+        pre[i] = new atomic<int>[jobs_per_thread];
         for(j = 0; j < jobs_per_thread; j++) {
-            all_jobs[i][j] = start_index + j;
+            pre[i][j] = start_index + j;
+            elems++;
         }
         start_index += jobs_per_thread;
     }
 
-    // for(int i = 0; i < num_threads; i++) {
-    //     for(int j = 0; j < jobs_per_thread; j++) {
-    //         printf(" %d ", all_jobs[i][j]);
-    //     }
-    // }
-
     clock_t start = clock();
 
     for(i = 0; i < num_threads; i++) {
-        t[i] = std::thread(&KQueue::do_work, qPointer, i, all_jobs[i], jobs_per_thread);
+        t[i] = std::thread(&KQueue::do_work, qPointer, i, pre[i], jobs_per_thread, true);
     }
 
-    for(int i = 0; i < num_threads; ++i) {
+    for(int i = 0; i < num_threads; i++) {
         t[i].join();
     }
 
     clock_t stop = clock();
     double elapsed = (double)(stop - start) * 1000.0 / CLOCKS_PER_SEC;
-    printf("Time elapsed in ms: %f\n", elapsed);
 
-    qPointer->printQueue();
+    printf("\nTime elapsed in ms: %f\n", elapsed);
+
+
+
+
+
+
+
+
+
+    printf("Jobs completed - %d\n\n", elems);
+
+    // qPointer->printQueue();
 
     return 0;
 }
