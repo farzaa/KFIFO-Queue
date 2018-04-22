@@ -5,6 +5,10 @@
 #include <thread>
 #include <chrono>
 
+// note - some of this code was inspired by the algorithms located at
+// https://github.com/scala/scala
+// nothing was directly taken.
+
 using namespace std;
 using namespace std::chrono;
 struct Item {
@@ -31,7 +35,7 @@ class KQueue {
     // Can we just pass around the individual segemnts?
     // Not sure if that would help.
     // This is how they do it in the paper, after all.
-    array<std::atomic<int>, 100000> arr = {};
+    array<std::atomic<int>, 10000000> arr = {};
 
     std::atomic<int> jobs_completed;
     std::atomic<int> failed;
@@ -93,36 +97,21 @@ class KQueue {
          return false;
      }
 
-     // The in_valid_region and not_in_valid_region functions
-     // were written with the assistance of the scal library.
-     // https://github.com/cksystemsgroup/scal
      bool in_valid_region(int tail_old, int tail_current, int head_current) {
-         if (tail_current < head_current) {
+         if(tail_current < head_current) {
              return true;
          } else {
              return false;
          }
-
-         bool wrap_around = (tail_current < head_current) ? true : false;
-         if (!wrap_around) {
-           return (head_current < tail_old && tail_old <= tail_current) ? true : false;
-       }
-
-         return (head_current < tail_old || tail_old <= tail_current) ? true : false;
-         return true;
      }
 
 
      bool not_in_valid_region(int tail_old, int tail_current, int head_current) {
-         bool wrap_around = (tail_current < head_current)
-                            ? true : false;
-         if (!wrap_around) {
-           return (tail_old < tail_current
-                   || head_current < tail_old) ? true : false;
+         if(tail_current < head_current) {
+             return true;
+         } else {
+             return false;
          }
-         return (tail_old < tail_current
-                 && head_current < tail_old) ? true : false;
-         return true;
      }
 
 
@@ -163,8 +152,6 @@ class KQueue {
     }
 
     bool enqueue(atomic<int> &new_item) {
-        return true;
-
         while(true) {
             int tail_old = tail.load();
             int head_old = head.load();
@@ -190,9 +177,10 @@ class KQueue {
                         // If our head segment has stuff, it means we are full.
                         if (segment_has_stuff(head_old) && head_old == head.load()) {
                             return false;
-                        } else {
-                            move_head_forward(head_old);
                         }
+
+                        move_head_forward(head_old);
+
                     }
 
                     // check if queue is full AND the segemnt
@@ -280,12 +268,12 @@ int main()
     // Initialize an array of atomic integers to 0.
     int i, j;
 
-    KQueue *qPointer = new KQueue(100000, 32);
+    KQueue *qPointer = new KQueue(10000000, 32);
     int dequeued_value;
     int start_index = 0;
 
     // This is the only paramater that should be modified!
-    int num_threads = 1;
+    int num_threads = 100;
 
     int total_jobs = 10000000;
     int jobs_per_thread = total_jobs/num_threads;
